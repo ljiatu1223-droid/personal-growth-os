@@ -1,11 +1,13 @@
 // sw.js — 个人成长操作系统 离线缓存
 // 策略：网络优先 + 缓存回退（保证更新及时，离线可用）
-var CACHE = 'growth-os-v2';
+var CACHE = 'growth-os-v3';
 var CORE = [
   './',
   './index.html',
   './styles.css',
   './mock.js',
+  './evidence.js',
+  './reminders.js',
   './app.js',
   './install-guide.js',
   './manifest.json',

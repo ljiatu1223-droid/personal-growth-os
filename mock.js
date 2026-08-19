@@ -693,6 +693,13 @@ function getDefaults(){
     timeline:[],                 // [{date,text}]
     weeklyReports:[],
     rescheduleEvents:[],         // [{taskId,time,from,to,reason}]
-    settings:{theme:'system',reminders:{daily:true,taskStart:true,weeklyReview:true,sleep:true}}
+    settings:{theme:'system',reminders:{daily:true,dailyTime:'09:00',taskStart:true,weeklyReview:true,weeklyTime:'20:00',sleep:true,sleepTime:'23:00'}}
   };
 }
+
+/* ===== Week 2-4 预告（原路线图：Week 1 跑通后规划后续，未开课）===== */
+var WEEKS_PREVIEW=[
+  {week:2,theme:'巩固与进阶',items:['健身 · 动作定型与渐进负荷','剪辑 · 节奏控制与转场','烹饪 · 火候与调味基础','小提琴 · 连弓与音阶准备']},
+  {week:3,theme:'完整输出',items:['健身 · 首次完整训练计划','剪辑 · 第一支完整短片','烹饪 · 两菜一汤一餐','小提琴 · 简单曲目片段']},
+  {week:4,theme:'毕业周',items:['四模块毕业考核','30 天总复盘','生成个人成长报告']}
+];

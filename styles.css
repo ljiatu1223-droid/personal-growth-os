@@ -437,6 +437,75 @@ body::after{content:'';position:fixed;inset:0;z-index:-1;opacity:.015;pointer-ev
 .as-btn.danger{background:rgba(255,59,48,.08);color:var(--c-danger)}
 .as-btn.cancel{background:none;color:var(--c-text-sub);font-weight:500}
 
+/* ===== 成果库缩略图网格（V1.1 真实上传）===== */
+.ev-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;padding:0 16px}
+.ev-card{background:var(--c-surface);border-radius:14px;overflow:hidden;cursor:pointer;
+  box-shadow:var(--sh-sm);border:.5px solid var(--c-border);transition:transform .15s var(--ease)}
+.ev-card:active{transform:scale(.96)}
+.ev-card-img{width:100%;aspect-ratio:1;object-fit:cover;display:block;background:var(--c-surface-2)}
+.ev-card-ph{width:100%;aspect-ratio:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  gap:6px;background:var(--c-surface-2);color:var(--c-text-tert);font-size:12px}
+.ev-card-ph svg{opacity:.5}
+.ev-card-play{position:absolute;margin:8px;width:28px;height:28px;border-radius:50%;
+  background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.ev-card{position:relative}
+.ev-card-title{font-size:12px;font-weight:600;color:var(--c-text);padding:7px 9px 2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3}
+.ev-card-date{font-size:11px;color:var(--c-text-tert);padding:0 9px 8px}
+.st-count{font-size:12px;font-weight:600;color:var(--c-primary);background:rgba(0,122,255,.1);
+  padding:2px 8px;border-radius:999px;margin-left:2px}
+
+/* 课程步骤内：已上传成果预览 */
+.evidence-uploaded{border-radius:14px;overflow:hidden;border:.5px solid var(--c-border);
+  background:var(--c-surface-2);cursor:pointer;transition:transform .15s var(--ease)}
+.evidence-uploaded:active{transform:scale(.98)}
+.evu-thumb{width:100%;max-height:260px;object-fit:cover;display:block}
+.evu-row{display:flex;align-items:center;gap:8px;padding:14px;color:var(--c-success);font-size:14px;font-weight:600}
+.evu-link{color:var(--c-primary);word-break:break-all;font-weight:500}
+.evu-hint{text-align:center;font-size:12px;color:var(--c-text-tert);padding:8px 0 10px}
+
+/* ===== 成果查看器（全屏）===== */
+.ev-viewer{position:fixed;inset:0;z-index:320;display:none;align-items:flex-end;justify-content:center}
+.ev-viewer.active{display:flex}
+.evv-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.75)}
+.evv-body{position:relative;width:100%;max-width:var(--maxw);background:var(--c-surface);
+  border-radius:var(--r-lg) var(--r-lg) 0 0;padding:16px 16px calc(20px + env(safe-area-inset-bottom));
+  max-height:88dvh;overflow-y:auto;-webkit-overflow-scrolling:touch;animation:slideUp .3s var(--ease)}
+.evv-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.evv-title{font-size:16px;font-weight:700;color:var(--c-text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.evv-close{background:var(--c-surface-2);border:none;width:32px;height:32px;border-radius:50%;
+  color:var(--c-text-sub);font-size:15px;cursor:pointer;flex:none;font-family:inherit}
+.evv-media img,.evv-media video{width:100%;border-radius:14px;display:block;max-height:60vh;object-fit:contain;background:#000}
+.evv-media video{object-fit:contain}
+.evv-empty{padding:40px 20px;text-align:center;color:var(--c-text-sub);font-size:14px;line-height:1.7}
+.evv-meta{display:flex;gap:12px;font-size:12px;color:var(--c-text-sub);margin-top:10px}
+.evv-delete{width:100%;margin-top:14px;background:rgba(255,59,48,.08);color:var(--c-danger);border:none;
+  border-radius:14px;padding:13px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer}
+.evv-delete:active{opacity:.7}
+
+/* ===== 设置页：时间选择器与提示条 ===== */
+.si-time{border:1.5px solid var(--c-border);background:var(--c-surface-2);border-radius:9px;
+  padding:6px 8px;font-size:13px;font-weight:600;color:var(--c-primary);font-family:inherit;flex:none;margin-left:auto}
+.si-time:focus{outline:none;border-color:var(--c-primary)}
+.settings-item .si-time{margin-left:auto}
+.settings-item.toggle .si-time{margin-left:auto;margin-right:8px}
+.settings-item.toggle .si-time+.si-switch{margin-left:0}
+.settings-note{display:flex;align-items:flex-start;gap:8px;font-size:12px;color:var(--c-text-sub);
+  line-height:1.6;padding:12px 16px;background:rgba(0,122,255,.05);border-radius:0}
+.settings-note.warn{background:rgba(255,149,0,.08);color:#977300}
+.settings-note svg{flex:none;margin-top:2px}
+.settings-group .settings-note{margin:0;border-radius:0}
+
+/* ===== Week 2-4 预告卡片 ===== */
+.week-preview{background:var(--c-surface);border-radius:var(--r-md);padding:14px 16px;margin:0 16px 10px;
+  border:.5px solid var(--c-border);box-shadow:var(--sh-sm)}
+.wp-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+.wp-title{font-size:15px;font-weight:700;color:var(--c-text)}
+.wp-badge{display:flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--c-text-tert);
+  background:var(--c-surface-2);padding:3px 8px;border-radius:999px}
+.wp-items{font-size:13px;color:var(--c-text-sub);line-height:1.9}
+
 /* ===== 深色模式补充 ===== */
 [data-theme=dark] .chip,[data-theme=dark] .day-picker button,[data-theme=dark] .as-btn,[data-theme=dark] .sc-cycle{background:var(--c-surface-2)}
 @media(prefers-color-scheme:dark){:root:not([data-theme=light]) .chip,:root:not([data-theme=light]) .day-picker button,:root:not([data-theme=light]) .as-btn,:root:not([data-theme=light]) .sc-cycle{background:var(--c-surface-2)}}

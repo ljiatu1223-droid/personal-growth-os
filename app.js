@@ -16,6 +16,7 @@ const ICONS={
   pause:'<rect x="6" y="4" width="3" height="16" rx="1"/><rect x="15" y="4" width="3" height="16" rx="1"/>',
   'rotate-ccw':'<polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>',
   camera:'<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/>',
+  info:'<circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/>',
   clock:'<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
   star:'<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2.09 9.27 8.91 8.26 12 2"/>',
   lock:'<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
@@ -81,6 +82,18 @@ function loadState(){
         if(!state.growth) state.growth=defaults.growth;
         if(!state.skills) state.skills=defaults.skills;
         if(!state.settings) state.settings=defaults.settings;
+        // v1.1 迁移：提醒设置整体 + 提醒时间默认值
+        if(state.settings&&!state.settings.reminders) state.settings.reminders=defaults.settings.reminders;
+        if(state.settings&&state.settings.reminders){
+          var rd=state.settings.reminders;
+          var rdDef=defaults.settings.reminders;
+          ['daily','taskStart','weeklyReview','sleep'].forEach(function(k){
+            if(rd[k]===undefined) rd[k]=rdDef[k];
+          });
+          if(rd.dailyTime===undefined) rd.dailyTime=rdDef.dailyTime;
+          if(rd.weeklyTime===undefined) rd.weeklyTime=rdDef.weeklyTime;
+          if(rd.sleepTime===undefined) rd.sleepTime=rdDef.sleepTime;
+        }
         if(!state.courseProgress) state.courseProgress={};
         if(!state.evidence) state.evidence=[];
         if(!state.timeline) state.timeline=[];
@@ -415,6 +428,21 @@ function renderPlan(){
   html+='<div style="font-size:13px;color:var(--c-text-sub);margin-top:4px">跳过或未完成的任务可补做，不挤占下周计划</div>';
   html+='</div>';
 
+  // Week 2-4 预告（按原路线图：Week 1 跑通后再开课）
+  if(typeof WEEKS_PREVIEW!=='undefined'){
+    html+='<div class="section-title">后续安排（预告）</div>';
+    WEEKS_PREVIEW.forEach(function(w){
+      html+='<div class="week-preview">';
+      html+='<div class="wp-head">';
+      html+='<div class="wp-title">Week '+w.week+' · '+esc(w.theme)+'</div>';
+      html+='<span class="wp-badge">'+ic('lock','icon-sm')+' 未开课</span>';
+      html+='</div>';
+      html+='<div class="wp-items">'+w.items.map(function(s){ return '· '+esc(s); }).join('<br>')+'</div>';
+      html+='</div>';
+    });
+    html+='<div style="font-size:12px;color:var(--c-text-tert);padding:0 4px">先完成 Week 1，毕业周报生成后再解锁后续课程</div>';
+  }
+
   // 冲突检测
   html+='<div class="section-title">智能提醒</div>';
   var conflicts=checkConflicts();
@@ -728,17 +756,27 @@ function renderGrowth(){
   }
 
   // 成果库（证据）
-  html+='<div class="section-title">成果库</div>';
+  html+='<div class="section-title">成果库 <span class="st-count" id="ev-count">'+state.evidence.length+'</span></div>';
   if(state.evidence.length===0){
     html+='<div class="empty-state">'+ic('camera','icon-xl')+'<div class="es-text">完成课程后上传的成果会显示在这里</div></div>';
   }else{
-    html+='<div class="card">';
+    html+='<div class="ev-grid">';
     state.evidence.slice().reverse().forEach(function(ev){
       var mod=MODULES[ev.module]||MODULES.review;
-      html+='<div class="evidence-row">';
-      html+='<span class="ev-icon '+mod.cls+'">'+ic(mod.icon,'icon-sm')+'</span>';
-      html+='<span class="ev-title">'+esc(ev.title)+'</span>';
-      html+='<span class="ev-date">'+esc(ev.date)+'</span>';
+      var evId=ev.id||evRecordId(ev.courseId,ev.step);
+      html+='<div class="ev-card" data-action="view-evidence" data-id="'+esc(evId)+'">';
+      if(ev.thumb){
+        html+='<img class="ev-card-img" src="'+ev.thumb+'" alt="'+esc(ev.title)+'">';
+      }else if(ev.kind==='link'&&ev.link){
+        html+='<div class="ev-card-ph">'+ic('link','icon-lg')+'<span>链接</span></div>';
+      }else if(ev.kind==='video'){
+        html+='<div class="ev-card-ph">'+ic('video','icon-lg')+'<span>视频</span></div>';
+      }else{
+        html+='<div class="ev-card-ph">'+ic(mod.icon,'icon-lg')+'<span>'+esc(mod.name)+'</span></div>';
+      }
+      if(ev.kind==='video'&&ev.thumb) html+='<div class="ev-card-play">'+ic('play','icon-sm')+'</div>';
+      html+='<div class="ev-card-title">'+esc(ev.title)+'</div>';
+      html+='<div class="ev-card-date">'+esc(ev.date)+'</div>';
       html+='</div>';
     });
     html+='</div>';
@@ -852,19 +890,31 @@ function renderProfile(){
   html+='<div class="section-title">提醒设置</div>';
   html+='<div class="settings-group">';
   var rem=state.settings.reminders;
+  var permStatus=Reminders.permission();
+  if(!Reminders.supported()){
+    html+='<div class="settings-note">'+ic('alert-triangle','icon-sm')+' 当前浏览器不支持系统通知，提醒功能不可用</div>';
+  }else if(permStatus==='denied'){
+    html+='<div class="settings-note warn">'+ic('alert-triangle','icon-sm')+' 通知权限已被拒绝。请到浏览器「设置 → 通知」允许本站通知，提醒才能生效</div>';
+  }else if(permStatus==='default'){
+    html+='<div class="settings-note">'+ic('bell','icon-sm')+' 打开任一提醒开关时会申请通知权限</div>';
+  }
   html+='<div class="settings-item toggle" data-action="toggle-reminder" data-key="daily">';
   html+='<div class="si-icon">'+ic('bell')+'</div><div class="si-label">每日提醒</div>';
+  html+='<input type="time" class="si-time" value="'+esc(rem.dailyTime||'09:00')+'" data-rem-time="dailyTime" onclick="event.stopPropagation()" onchange="setReminderTime(this.dataset.remTime,this.value)">';
   html+='<div class="si-switch '+(rem.daily?'on':'')+'"></div></div>';
   html+='<div class="settings-item toggle" data-action="toggle-reminder" data-key="taskStart">';
   html+='<div class="si-icon">'+ic('clock')+'</div><div class="si-label">任务开始提醒</div>';
   html+='<div class="si-switch '+(rem.taskStart?'on':'')+'"></div></div>';
   html+='<div class="settings-item toggle" data-action="toggle-reminder" data-key="weeklyReview">';
   html+='<div class="si-icon">'+ic('chart-column')+'</div><div class="si-label">周复盘提醒</div>';
+  html+='<input type="time" class="si-time" value="'+esc(rem.weeklyTime||'20:00')+'" data-rem-time="weeklyTime" onclick="event.stopPropagation()" onchange="setReminderTime(this.dataset.remTime,this.value)">';
   html+='<div class="si-switch '+(rem.weeklyReview?'on':'')+'"></div></div>';
   html+='<div class="settings-item toggle" data-action="toggle-reminder" data-key="sleep">';
   html+='<div class="si-icon">'+ic('moon')+'</div><div class="si-label">入睡提醒</div>';
+  html+='<input type="time" class="si-time" value="'+esc(rem.sleepTime||'23:00')+'" data-rem-time="sleepTime" onclick="event.stopPropagation()" onchange="setReminderTime(this.dataset.remTime,this.value)">';
   html+='<div class="si-switch '+(rem.sleep?'on':'')+'"></div></div>';
   html+='</div>';
+  html+='<div class="settings-note" style="margin:8px 16px 0">'+ic('info','icon-sm')+' 本地提醒：应用运行时到点弹出通知（本工具无服务器，不支持息屏推送）。建议安装到主屏幕日常常驻</div>';
 
   // 外观
   html+='<div class="section-title">外观</div>';
@@ -955,11 +1005,15 @@ function exportData(){
 }
 
 function resetData(){
-  if(confirm('确定重置所有数据？此操作不可恢复。')){
+  if(confirm('确定重置所有数据？此操作不可恢复。\n\n（包括任务进度与已上传的成果照片/视频）')){
     localStorage.removeItem('pgos_state');
     state=getDefaults();
     saveState();
     applyTheme();
+    // 同步清空 IndexedDB 里的成果文件
+    if(typeof EvidenceDB!=='undefined'){
+      EvidenceDB.clearAll().catch(function(){});
+    }
     navigate('today');
   }
 }
@@ -1484,13 +1538,25 @@ function renderComponent(comp,stepIdx,compIdx){
       html+='<div class="comp">';
       if(comp.label) html+='<div class="card-title" style="margin-bottom:8px">'+esc(comp.label)+'</div>';
       if(sdE.evidence){
-        html+='<div class="evidence-done">'+ic('check-circle','icon-sm')+' 成果已上传</div>';
+        var evMeta=findEvidenceMeta(currentCourse,stepIdx);
+        var evId=evRecordId(currentCourse,stepIdx);
+        html+='<div class="evidence-uploaded" data-action="view-evidence" data-id="'+esc(evId)+'">';
+        if(sdE.linkValue){
+          html+='<div class="evu-row">'+ic('link','icon-sm')+'<span class="evu-link">'+esc(sdE.linkValue)+'</span></div>';
+        }else if(evMeta&&evMeta.thumb){
+          html+='<img class="evu-thumb" src="'+evMeta.thumb+'" alt="成果预览">';
+        }else{
+          html+='<div class="evu-row">'+ic('check-circle','icon-sm')+' '+(evMeta&&evMeta.kind==='video'?'视频已上传':'成果已上传')+'</div>';
+        }
+        html+='<div class="evu-hint">点击查看 / 删除</div>';
+        html+='</div>';
       }else{
         var kinds=(comp.kinds||[]).join(' / ');
+        var kindText=kinds||'文件';
         html+='<div class="evidence-area" data-action="upload-evidence" data-step="'+stepIdx+'">';
         html+=ic('camera','icon-lg');
-        html+='<div>点击上传（'+esc(kinds||'文件')+'）</div>';
-        html+='<div style="font-size:12px">原型演示：点击即视为已上传</div>';
+        html+='<div>点击上传（'+esc(kindText)+'）</div>';
+        html+='<div style="font-size:12px">支持拍照或从相册选择 · 原图保存在本机</div>';
         html+='</div>';
       }
       html+='</div>';
@@ -1656,22 +1722,103 @@ function toggleSelfcheck(stepIdx,itemIdx){
 }
 
 function simulateUpload(stepIdx){
+  // 真实上传入口：选择文件 → 压缩存储 → 更新状态
+  uploadEvidence(stepIdx);
+}
+
+/* 找到某步骤里的 evidence 组件定义 */
+function findEvidenceComp(course,stepIdx){
+  var step=course.steps[stepIdx];
+  if(!step) return null;
+  for(var i=0;i<(step.components||[]).length;i++){
+    if(step.components[i].type==='evidence') return step.components[i];
+  }
+  return null;
+}
+
+function evRecordId(courseId,stepIdx){ return courseId+'_'+stepIdx; }
+
+/* 从 state.evidence 找记录（兼容无 id 的旧数据） */
+function findEvidenceMeta(courseId,stepIdx){
+  var id=evRecordId(courseId,stepIdx);
+  return state.evidence.find(function(ev){ return ev.id===id||(ev.courseId===courseId&&ev.step===stepIdx); })||null;
+}
+
+function uploadEvidence(stepIdx){
   var course=COURSES[currentCourse];
   var cp=state.courseProgress[currentCourse];
   if(!cp.stepData[stepIdx]) cp.stepData[stepIdx]={};
-  if(cp.stepData[stepIdx].evidence) return;
+  var comp=findEvidenceComp(course,stepIdx);
+  var kinds=(comp&&comp.kinds)||['image'];
+
+  // 纯链接类成果：走输入框
+  var needFile=kinds.indexOf('image')>=0||kinds.indexOf('video')>=0;
+  if(!needFile){
+    showInputModal('提交成果链接','粘贴链接（网盘/视频地址等）','text',cp.stepData[stepIdx].linkValue||'',function(v){
+      if(!v||!v.trim()) return;
+      cp.stepData[stepIdx].linkValue=v.trim();
+      completeUpload(course,stepIdx,{kind:'link',link:v.trim()});
+    });
+    return;
+  }
+
+  // 文件选择（图片/视频）
+  var accept=[];
+  if(kinds.indexOf('image')>=0) accept.push('image/*');
+  if(kinds.indexOf('video')>=0) accept.push('video/*');
+  var input=document.createElement('input');
+  input.type='file';
+  input.accept=accept.join(',');
+  input.onchange=function(){
+    if(!input.files||!input.files[0]) return;
+    var file=input.files[0];
+    var id=evRecordId(currentCourse,stepIdx);
+    var meta={
+      id:id,
+      courseId:currentCourse,
+      step:stepIdx,
+      module:course.module,
+      title:comp.label||course.evidenceLabel||course.outcome||course.title,
+      date:fmtDate(new Date())
+    };
+    // 处理中提示
+    var area=document.querySelector('.evidence-area');
+    if(area){ area.innerHTML='<div style="padding:18px;font-size:14px;color:var(--c-text-sub)">处理中，请稍候…</div>'; }
+    EvidenceDB.saveEvidence(file,meta).then(function(r){
+      completeUpload(course,stepIdx,{kind:(r.mime||'').indexOf('video')===0?'video':'image',thumb:r.thumb,size:r.size});
+    }).catch(function(err){
+      alert('上传失败：'+(err&&err.message?err.message:'未知错误'));
+      renderCourseStep();
+    });
+  };
+  input.click();
+}
+
+/* 上传完成后的状态更新（图片/视频/链接共用） */
+function completeUpload(course,stepIdx,info){
+  var cp=state.courseProgress[currentCourse];
   cp.stepData[stepIdx].evidence=true;
 
-  // 记录到成果库（去重）
-  var exists=state.evidence.some(function(ev){return ev.courseId===currentCourse&&ev.step===stepIdx;});
+  var id=evRecordId(currentCourse,stepIdx);
+  var exists=state.evidence.find(function(ev){ return ev.id===id||(ev.courseId===currentCourse&&ev.step===stepIdx); });
   if(!exists){
     state.evidence.push({
+      id:id,
       courseId:currentCourse,
       step:stepIdx,
       module:course.module,
       title:course.evidenceLabel||course.outcome||course.title,
-      date:fmtDate(new Date())
+      date:fmtDate(new Date()),
+      kind:info.kind||'image',
+      thumb:info.thumb||null,
+      size:info.size||0,
+      link:info.link||null
     });
+  }else{
+    exists.thumb=info.thumb||exists.thumb||null;
+    exists.kind=info.kind||exists.kind;
+    exists.size=info.size||exists.size||0;
+    exists.link=info.link||exists.link||null;
   }
 
   // 若课程已完成且此前成果待补 → 补交后任务完成
@@ -1690,6 +1837,39 @@ function simulateUpload(stepIdx){
   saveState();
   renderCourseStep();
 }
+
+/* 删除成果（查看器回调）：清 IndexedDB + state，课程步骤回到待上传 */
+window.onEvidenceDeleted=function(id,meta){
+  var m=meta||{};
+  var courseId=m.courseId,step=m.step;
+  // 旧数据兼容：从 id 解析
+  if(courseId===undefined&&typeof id==='string'){
+    var p=id.lastIndexOf('_');
+    if(p>0){ courseId=id.slice(0,p); step=parseInt(id.slice(p+1),10); }
+  }
+  var idx=state.evidence.findIndex(function(ev){ return ev.id===id||(ev.courseId===courseId&&ev.step===step); });
+  if(idx>=0) state.evidence.splice(idx,1);
+
+  if(courseId&&COURSES[courseId]){
+    var cp=state.courseProgress[courseId];
+    var course=COURSES[courseId];
+    if(cp&&cp.stepData&&cp.stepData[step]){
+      delete cp.stepData[step].evidence;
+      delete cp.stepData[step].linkValue;
+    }
+    if(cp&&cp.completed){
+      cp.evidenceDone=allEvidenceUploaded(course,cp);
+      cp.resultState=cp.evidenceDone?'done':'evidence_pending';
+    }
+  }
+  saveState();
+  // 刷新当前视图
+  if(currentCourse&&!document.getElementById('course-overlay').classList.contains('hidden')){
+    renderCourseStep();
+  }else{
+    navigate(currentPage);
+  }
+};
 
 function allEvidenceUploaded(course,cp){
   var ok=true;
@@ -2061,6 +2241,27 @@ document.addEventListener('click',function(e){
     case 'upload-evidence':
       simulateUpload(parseInt(el.dataset.step,10));
       break;
+    case 'view-evidence':{
+      var vId=el.dataset.id;
+      var vMeta=null;
+      // 从 state.evidence 找元数据（含旧数据兼容）
+      var vIdx=state.evidence.findIndex(function(ev){ return (ev.id||evRecordId(ev.courseId,ev.step))===vId; });
+      if(vIdx>=0) vMeta=state.evidence[vIdx];
+      else{
+        var vp=vId.lastIndexOf('_');
+        if(vp>0){
+          var vC=vId.slice(0,vp),vS=parseInt(vId.slice(vp+1),10);
+          vMeta=state.evidence.find(function(ev){ return ev.courseId===vC&&ev.step===vS; })||null;
+        }
+      }
+      if(vMeta&&vMeta.kind==='link'&&vMeta.link&&!vMeta.thumb){
+        // 纯链接：直接打开
+        if(confirm('在浏览器中打开这个链接？\n\n'+vMeta.link)){ window.open(vMeta.link,'_blank'); }
+      }else{
+        EvidenceDB.showViewer(vId,vMeta||{title:'成果'});
+      }
+      break;
+    }
     case 'course-start-steps':
       startCourseSteps();
       break;
@@ -2079,11 +2280,31 @@ document.addEventListener('click',function(e){
       saveState();
       renderProfile();
       break;
-    case 'toggle-reminder':
-      state.settings.reminders[el.dataset.key]=!state.settings.reminders[el.dataset.key];
-      saveState();
-      renderProfile();
+    case 'toggle-reminder':{
+      var rk=el.dataset.key;
+      var rWant=!state.settings.reminders[rk];
+      if(rWant&&Reminders.supported()){
+        Reminders.ensurePermission(true).then(function(p){
+          if(p==='granted'){
+            state.settings.reminders[rk]=true;
+            Reminders.notify('提醒已开启','到点会在这里通知你','enabled');
+          }else if(p==='denied'){
+            alert('通知权限被拒绝，无法开启提醒。\n\n请在浏览器「设置 → 通知」中允许本站通知后重试。');
+          }else if(p==='unsupported'){
+            state.settings.reminders[rk]=true;
+          }else{
+            // 用户关闭了权限弹窗，保持开关不变
+          }
+          saveState();
+          renderProfile();
+        });
+      }else{
+        state.settings.reminders[rk]=rWant;
+        saveState();
+        renderProfile();
+      }
       break;
+    }
     case 'set-theme':
       state.settings.theme=el.dataset.theme;
       saveState();
@@ -2116,6 +2337,13 @@ function taskCourseId(taskId){
   return t?t.courseId:null;
 }
 
+/* ===== 提醒时间设置（设置页时间选择器）===== */
+function setReminderTime(key,val){
+  if(!val||!state.settings.reminders) return;
+  state.settings.reminders[key]=val;
+  saveState();
+}
+
 /* ===== 初始化 ===== */
 function init(){
   loadState();
@@ -2128,6 +2356,9 @@ function init(){
   document.getElementById('icon-tab-profile').innerHTML=svgIcon('user');
 
   navigate('today');
+
+  // 本地提醒引擎
+  if(typeof Reminders!=='undefined') Reminders.init();
 
   // 倒计时每30秒刷新
   setInterval(function(){
