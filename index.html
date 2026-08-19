@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="theme-color" content="#007AFF">
+  <title>个人成长操作系统</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="favicon.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+
+<!-- ===== App Shell ===== -->
+<div id="app">
+
+  <!-- Page: 今日 -->
+  <div id="page-today" class="page"></div>
+
+  <!-- Page: 计划 -->
+  <div id="page-plan" class="page"></div>
+
+  <!-- Page: 学习 -->
+  <div id="page-learn" class="page"></div>
+
+  <!-- Page: 成长 -->
+  <div id="page-growth" class="page"></div>
+
+  <!-- Page: 我的 -->
+  <div id="page-profile" class="page"></div>
+
+</div>
+
+<!-- ===== Course Overlay ===== -->
+<div id="course-overlay">
+  <div class="course-header">
+    <button class="ch-back" onclick="closeCourse()">
+      <span class="icon icon-sm" id="icon-back"></span>
+      <span>返回</span>
+    </button>
+    <div class="ch-title" id="course-title"></div>
+    <div style="width:60px"></div>
+  </div>
+  <div class="course-progress" id="course-progress"></div>
+  <div class="course-body" id="course-body"></div>
+  <div class="course-footer">
+    <button class="btn btn-secondary" id="course-prev" onclick="prevStep()" style="flex:1">
+      <span class="icon icon-sm" id="icon-prev"></span>
+      上一步
+    </button>
+    <button class="btn btn-primary" id="course-next" onclick="nextStep()" style="flex:2">
+      <span id="next-label">下一步</span>
+      <span class="icon icon-sm" id="icon-next"></span>
+    </button>
+  </div>
+</div>
+
+<!-- ===== Bottom Sheet (任务操作/调整/跳过) ===== -->
+<div id="sheet-modal" class="sheet-modal">
+  <div class="sheet-backdrop" data-action="close-sheet"></div>
+  <div class="sheet-content" id="sheet-content"></div>
+</div>
+
+<!-- ===== Input Modal ===== -->
+<div id="input-modal" class="input-modal">
+  <div class="input-modal-content" id="input-modal-content"></div>
+</div>
+
+<!-- ===== Tab Bar ===== -->
+<nav id="tabbar">
+  <button class="tab active" data-page="today" onclick="navigate('today')">
+    <span class="icon" id="icon-tab-today"></span>
+    <span class="tab-label">今日</span>
+  </button>
+  <button class="tab" data-page="plan" onclick="navigate('plan')">
+    <span class="icon" id="icon-tab-plan"></span>
+    <span class="tab-label">计划</span>
+  </button>
+  <button class="tab" data-page="learn" onclick="navigate('learn')">
+    <span class="icon" id="icon-tab-learn"></span>
+    <span class="tab-label">学习</span>
+  </button>
+  <button class="tab" data-page="growth" onclick="navigate('growth')">
+    <span class="icon" id="icon-tab-growth"></span>
+    <span class="tab-label">成长</span>
+  </button>
+  <button class="tab" data-page="profile" onclick="navigate('profile')">
+    <span class="icon" id="icon-tab-profile"></span>
+    <span class="tab-label">我的</span>
+  </button>
+</nav>
+
+<script src="mock.js"></script>
+<script src="app.js"></script>
+<script>
+  // 注册 Service Worker（HTTPS/localhost 下生效，失败不影响使用）
+  if ('serviceWorker' in navigator) {
+    try {
+      navigator.serviceWorker.register('sw.js').catch(function(){});
+    } catch (e) {}
+  }
+</script>
+</body>
+</html>
