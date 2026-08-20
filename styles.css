@@ -483,6 +483,33 @@ body::after{content:'';position:fixed;inset:0;z-index:-1;opacity:.015;pointer-ev
 .evv-delete{width:100%;margin-top:14px;background:rgba(255,59,48,.08);color:var(--c-danger);border:none;
   border-radius:14px;padding:13px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer}
 .evv-delete:active{opacity:.7}
+.evv-save{width:100%;margin-top:10px;background:rgba(0,122,255,.08);color:var(--c-primary);border:none;
+  border-radius:14px;padding:13px;font-size:14px;font-weight:600;font-family:inherit;cursor:pointer}
+.evv-save:active{opacity:.7}
+
+/* ===== 课程步骤内：多缩略图网格（v1.2 多文件）===== */
+.ev-thumbs{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.ev-th{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;cursor:pointer;
+  border:.5px solid var(--c-border);background:var(--c-surface-2);transition:transform .15s var(--ease)}
+.ev-th:active{transform:scale(.94)}
+.ev-th img{width:100%;height:100%;object-fit:cover;display:block}
+.ev-th-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:var(--c-text-tert)}
+.ev-th-play{position:absolute;right:5px;bottom:5px;width:22px;height:22px;border-radius:50%;
+  background:rgba(0,0,0,.55);color:#fff;display:flex;align-items:center;justify-content:center;
+  backdrop-filter:blur(4px);-webkit-backdrop-filter:blur(4px)}
+.ev-th-play svg{width:11px;height:11px;margin-left:1px}
+.ev-th-add{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+  color:var(--c-text-sub);font-size:11px;font-weight:600;border:1.5px dashed var(--c-border);background:transparent}
+.ev-th-add:active{color:var(--c-primary);border-color:var(--c-primary)}
+.icon-xs svg{width:12px;height:12px}
+
+/* ===== 全局轻提示（toast）===== */
+#app-toast{position:fixed;left:50%;bottom:calc(76px + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(12px);
+  z-index:400;max-width:min(86vw,340px);padding:11px 16px;border-radius:14px;
+  background:rgba(28,28,30,.92);color:#fff;font-size:13px;line-height:1.55;text-align:center;
+  opacity:0;pointer-events:none;transition:opacity .25s var(--ease),transform .25s var(--ease);
+  backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);box-shadow:var(--sh-lg)}
+#app-toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 /* ===== 设置页：时间选择器与提示条 ===== */
 .si-time{border:1.5px solid var(--c-border);background:var(--c-surface-2);border-radius:9px;
