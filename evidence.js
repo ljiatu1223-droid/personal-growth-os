@@ -226,6 +226,7 @@ var EvidenceDB=(function(){
           '<span>'+(meta?esc(meta.date):'')+'</span>'+
           (meta&&meta.size?('<span>'+Math.round(meta.size/1024)+'KB</span>'):'')+
         '</div>'+
+        '<button class="evv-save" data-evv="save">保存原片</button>'+
         '<button class="evv-delete" data-evv="delete">删除此成果</button>'+
       '</div>';
 
@@ -237,6 +238,9 @@ var EvidenceDB=(function(){
       if(!t) return;
       var act=t.dataset.evv;
       if(act==='close') close();
+      if(act==='save'){
+        saveOriginal(id,meta).catch(function(){ alert('原片不在本机（可能来自旧数据或导入的缩略图记录），无法保存'); });
+      }
       if(act==='delete'){
         if(!confirm('确定删除这个成果吗？删除后该课程步骤需重新上传。')) return;
         del(id).then(function(){
@@ -269,6 +273,82 @@ var EvidenceDB=(function(){
     });
   }
 
+  /* ---------- 备份：Blob ↔ base64 ---------- */
+  function blobToDataURL(blob){
+    return new Promise(function(resolve,reject){
+      var fr=new FileReader();
+      fr.onload=function(){ resolve(fr.result); };
+      fr.onerror=function(){ reject(fr.error||new Error('读取失败')); };
+      fr.readAsDataURL(blob);
+    });
+  }
+  function dataURLtoBlob(dataURL){
+    try{
+      var p=String(dataURL||'').split(',');
+      var mime=(p[0].match(/data:([^;]+)/)||[])[1]||'application/octet-stream';
+      var bin=atob(p[1]||'');
+      var arr=new Uint8Array(bin.length);
+      for(var i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+      return new Blob([arr],{type:mime});
+    }catch(e){ return null; }
+  }
+
+  /* 导出全部图片原片（视频过大不打包，可在查看器单独保存原片）
+   * 返回 [{id,courseId,step,module,title,date,kind,mime,size,ts,data}] */
+  function exportImages(maxEachKB,totalKB){
+    maxEachKB=maxEachKB||8*1024;
+    totalKB=totalKB||30*1024;
+    return list().then(function(recs){
+      var used=0;
+      var picked=recs.filter(function(rec){
+        if(!rec||!rec.blob) return false;
+        if((rec.mime||'').indexOf('video')===0) return false;   // 视频不打包
+        if(rec.size>maxEachKB*1024) return false;
+        if(used+rec.size>totalKB*1024) return false;
+        used+=rec.size;
+        return true;
+      }).sort(function(a,b){ return (b.ts||0)-(a.ts||0); });    // 新的优先
+      return Promise.all(picked.map(function(rec){
+        return blobToDataURL(rec.blob).then(function(data){
+          return {id:rec.id,courseId:rec.courseId,step:rec.step,module:rec.module,
+            title:rec.title,date:rec.date,kind:'image',mime:rec.mime,size:rec.size,ts:rec.ts,data:data};
+        });
+      }));
+    });
+  }
+
+  /* 导入备份：回填原片到 IndexedDB（同 id 覆盖；缩略图重新生成） */
+  function restoreFiles(files){
+    files=(files||[]).filter(function(f){ return f&&f.id&&f.data; });
+    return Promise.all(files.map(function(f){
+      var blob=dataURLtoBlob(f.data);
+      if(!blob) return Promise.resolve();
+      return makeThumb(blob,240).then(function(thumb){
+        return put({id:f.id,courseId:f.courseId,step:f.step,module:f.module,title:f.title,
+          date:f.date,kind:f.kind||'image',mime:blob.type,size:blob.size,
+          ts:f.ts||Date.now(),thumb:thumb,blob:blob});
+      }).catch(function(){ return; });
+    }));
+  }
+
+  /* 保存原片到本地（相册 / 文件 App） */
+  function saveOriginal(id,meta){
+    return get(id).then(function(rec){
+      if(!rec||!rec.blob) return Promise.reject(new Error('原片不在本机'));
+      var url=URL.createObjectURL(rec.blob);
+      var a=document.createElement('a');
+      var ext=((rec.mime||'').split('/')[1]||'bin').split(';')[0];
+      var base=(meta&&meta.title?meta.title:'growth-evidence').replace(/[\\/:*?"<>|]/g,'');
+      a.href=url;
+      a.download=base+'-'+id+'.'+ext;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} },2000);
+      return true;
+    });
+  }
+
   return {
     saveEvidence:saveEvidence,
     get:get,
@@ -277,7 +357,10 @@ var EvidenceDB=(function(){
     clearAll:clearAll,
     getUrl:getUrl,
     showViewer:showViewer,
-    compressImage:compressImage
+    compressImage:compressImage,
+    exportImages:exportImages,
+    restoreFiles:restoreFiles,
+    saveOriginal:saveOriginal
   };
 
   function esc(s){
