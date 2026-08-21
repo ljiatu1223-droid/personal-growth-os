@@ -1,6 +1,7 @@
-/* app2.js — v1.2 覆盖补丁（P0/P1 修复）
+/* app2.js — v1.3 覆盖补丁（P0/P1 修复 + 每周备份提醒）
  * 在 app.js 之后加载：重定义本轮修复涉及的函数 + 捕获阶段接管事件分发
- * 内容与本地 v1.2 源码对应函数逐字节一致（由构建脚本抽取）
+ * v1.2 部分与本地 v1.2 源码对应函数逐字节一致（由构建脚本抽取）
+ * v1.3 新增：BackupReminder 每周备份提醒（数据安全功能，默认开启不可关）
  */
 try{ ICONS.plus='<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'; }catch(e){}
 
@@ -44,6 +45,103 @@ function toast(msg){
   t.classList.add('show');
   if(_toastTimer) clearTimeout(_toastTimer);
   _toastTimer=setTimeout(function(){ t.classList.remove('show'); },5000);
+}
+
+/* ===== v1.3 BackupReminder 每周备份提醒 =====
+ * 数据安全默认开启：距上次备份 ≥ 7 天且有值得备份的数据时提醒一次（一周最多一次）
+ * 基准：上次成功导出/导入；从未备份则以首次使用时间为基准
+ * 提醒通道：应用内 toast（主）+ 系统通知（已授权时）
+ */
+var BackupReminder=(function(){
+  'use strict';
+  var LAST_KEY='pgos_last_backup';
+  var WARN_KEY='pgos_backup_warned';
+  var INSTALL_KEY='pgos_install';
+  var DAY_MS=86400000;
+  var INTERVAL_DAYS=7;
+
+  function readISO(k){
+    try{ var v=localStorage.getItem(k); return v?new Date(v):null; }catch(e){ return null; }
+  }
+  function writeISO(k,d){ try{ localStorage.setItem(k,d.toISOString()); }catch(e){} }
+
+  /* 是否有值得备份的数据：成果记录 / 已完成的任务 / 课程进度 */
+  function hasValuableData(){
+    try{
+      if(!state) return false;
+      if((state.evidence||[]).length>0) return true;
+      var done=(state.tasks||[]).some(function(t){ return t.status==='completed'||t.status==='skipped'; });
+      if(done) return true;
+      return Object.keys(state.courseProgress||{}).some(function(cid){
+        var cp=state.courseProgress[cid];
+        return !!(cp&&(cp.completed||cp.evidenceDone||(cp.stepIdx||0)>0));
+      });
+    }catch(e){ return false; }
+  }
+
+  function daysSince(d){ return Math.floor((Date.now()-d.getTime())/DAY_MS); }
+
+  /* 距上次备份天数；从未备份返回 null */
+  function lastBackupDays(){
+    var last=readISO(LAST_KEY);
+    return last?daysSince(last):null;
+  }
+
+  /* 超期天数：<0 表示无需提醒（数据少 / 未满一周） */
+  function overdueDays(){
+    if(!hasValuableData()) return -1;
+    var base=readISO(LAST_KEY)||readISO(INSTALL_KEY)||new Date();
+    var d=daysSince(base);
+    return d>=INTERVAL_DAYS?d:-1;
+  }
+
+  function markBackupDone(){
+    writeISO(LAST_KEY,new Date());
+    try{ localStorage.removeItem(WARN_KEY); }catch(e){}
+  }
+
+  function check(){
+    try{
+      var d=overdueDays();
+      if(d<0) return;
+      var warned=readISO(WARN_KEY);
+      if(warned&&daysSince(warned)<INTERVAL_DAYS) return;   // 一周最多提醒一次
+      writeISO(WARN_KEY,new Date());
+      var msg='已 '+d+' 天未备份，打开「我的」导出完整备份（含图片原片）';
+      toast('备份提醒：'+msg);
+      if(typeof Reminders!=='undefined'&&Reminders.notify){
+        Reminders.notify('该备份你的成长数据了',msg,'backup');
+      }
+    }catch(e){}
+  }
+
+  function init(){
+    try{
+      if(!localStorage.getItem(INSTALL_KEY)) writeISO(INSTALL_KEY,new Date());
+    }catch(e){}
+    if(init._done) return;
+    init._done=true;
+    setTimeout(check,2500);            // 错开启动时的其他提示
+    setInterval(check,10*60*1000);     // 常开也能到点提醒
+  }
+
+  return {
+    init:init,
+    check:check,
+    markBackupDone:markBackupDone,
+    lastBackupDays:lastBackupDays,
+    overdueDays:overdueDays
+  };
+})();
+
+/* 「我的」页备份状态徽标（renderProfile 用）：X 天前 / 从未备份，超期橙色 */
+function backupStatusHtml(){
+  try{
+    var days=BackupReminder.lastBackupDays();
+    var overdue=BackupReminder.overdueDays()>=0;
+    var txt=(days===null)?'从未备份':(days===0?'今天':days+' 天前');
+    return '<div class="si-value"'+(overdue?' style="color:#FF9500;font-weight:600"':'')+'>'+txt+'</div>';
+  }catch(e){ return ''; }
 }
 
 /* P0-2 完整备份（含图片原片）与导入回填 */
@@ -147,6 +245,7 @@ function renderProfile(){
   html+='<div class="settings-item" data-action="export-data">';
   html+='<div class="si-icon">'+ic('download')+'</div>';
   html+='<div class="si-label">导出完整备份（含图片原片）</div>';
+  html+=backupStatusHtml();
   html+='<div class="si-arrow">'+ic('chevron-right','icon-sm')+'</div></div>';
   html+='<div class="settings-item" data-action="import-data">';
   html+='<div class="si-icon">'+ic('upload')+'</div>';
@@ -181,6 +280,7 @@ function importData(){
           delete data.exportedAt;
           state=data;
           saveState();
+          if(typeof BackupReminder!=='undefined') BackupReminder.markBackupDone();   // v1.3：导入文件即一份备份
           applyTheme();
           if(files.length&&typeof EvidenceDB!=='undefined'){
             toast('正在回填 '+files.length+' 张原片…');
@@ -208,6 +308,7 @@ function exportData(){
     ?EvidenceDB.exportImages().catch(function(){ return []; })
     :Promise.resolve([]);
   prep.then(function(files){
+    if(typeof BackupReminder!=='undefined') BackupReminder.markBackupDone();   // v1.3：记录备份时间
     var payload=JSON.parse(JSON.stringify(state));
     payload.pgosFullBackup=true;
     payload.exportedAt=new Date().toISOString();
@@ -747,3 +848,6 @@ document.addEventListener('click',function(e){
 
 /* 首屏用新版渲染器重绘当前页 */
 if(typeof navigate==='function'){ try{ navigate(typeof currentPage!=='undefined'?currentPage:'today'); }catch(e){} }
+
+/* v1.3：启动每周备份提醒 */
+if(typeof BackupReminder!=='undefined'){ BackupReminder.init(); }
