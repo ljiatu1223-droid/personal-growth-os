@@ -45,6 +45,7 @@ const ICONS={
   'shield':'<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.04 7-3 2.5 1.96 5 3 7 3a1 1 0 0 1 1 1z"/>',
   palette:'<circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 2C6.5 2 2 6.14 2 11.25c0 .96.46 2.03 1.68 2.7l1.4.83c.53.32.92 1.04.92 1.66v1.56c0 1.14.93 2.07 2.07 2.07.57 0 1.08-.23 1.46-.61l.96-.96c.32-.32.75-.5 1.2-.5H19c2.76 0 5-2.24 5-5 0-6.34-4.84-10-12-10z"/>',
   'arrow-right':'<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>',
+  plus:'<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>',
   flag:'<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>'
 };
 
@@ -111,7 +112,45 @@ function loadState(){
 }
 
 function saveState(){
-  try{ localStorage.setItem('pgos_state',JSON.stringify(state)); }catch(e){}
+  try{
+    localStorage.setItem('pgos_state',JSON.stringify(state));
+  }catch(e){
+    /* 存储超限降级：先只保留最近 40 条缩略图 → 再全部剥离（原片在 IndexedDB，不受影响） */
+    if(trimThumbs(40)||trimThumbs(0)){
+      try{ localStorage.setItem('pgos_state',JSON.stringify(state)); return; }catch(e2){}
+    }
+    var now=Date.now();
+    if(now-(saveState._warn||0)>60000){
+      saveState._warn=now;
+      toast('本机存储空间不足，最新修改可能没有保存。建议：我的 → 导出数据备份，并删除部分旧成果。');
+    }
+  }
+}
+
+/* 缩减 state.evidence 缩略图：keep=保留最近 N 条，其余置 null；返回是否有改动 */
+function trimThumbs(keep){
+  var changed=false;
+  if(!state.evidence||!state.evidence.length) return false;
+  for(var i=state.evidence.length-1;i>=0;i--){
+    var ev=state.evidence[i];
+    if(ev.thumb&&state.evidence.length-1-i>=keep){ ev.thumb=null; changed=true; }
+  }
+  return changed;
+}
+
+/* 轻提示（不打断操作） */
+var _toastTimer=null;
+function toast(msg){
+  var t=document.getElementById('app-toast');
+  if(!t){
+    t=document.createElement('div');
+    t.id='app-toast';
+    document.body.appendChild(t);
+  }
+  t.textContent=msg;
+  t.classList.add('show');
+  if(_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer=setTimeout(function(){ t.classList.remove('show'); },5000);
 }
 
 /* ===== 工具函数 ===== */
@@ -935,7 +974,7 @@ function renderProfile(){
   html+='<div class="settings-group">';
   html+='<div class="settings-item" data-action="export-data">';
   html+='<div class="si-icon">'+ic('download')+'</div>';
-  html+='<div class="si-label">导出数据（JSON 备份）</div>';
+  html+='<div class="si-label">导出完整备份（含图片原片）</div>';
   html+='<div class="si-arrow">'+ic('chevron-right','icon-sm')+'</div></div>';
   html+='<div class="settings-item" data-action="import-data">';
   html+='<div class="si-icon">'+ic('upload')+'</div>';
@@ -978,11 +1017,23 @@ function importData(){
       try{
         var data=JSON.parse(reader.result);
         if(data&&data.tasks&&data.courseProgress&&data.profile){
+          var files=data.evidenceFiles||[];
+          delete data.evidenceFiles;
+          delete data.pgosFullBackup;
+          delete data.exportedAt;
           state=data;
           saveState();
           applyTheme();
-          alert('导入成功');
-          navigate('today');
+          if(files.length&&typeof EvidenceDB!=='undefined'){
+            toast('正在回填 '+files.length+' 张原片…');
+            EvidenceDB.restoreFiles(files).then(function(){
+              toast('导入成功（含 '+files.length+' 张原片）');
+              navigate('today');
+            });
+          }else{
+            toast('导入成功');
+            navigate('today');
+          }
         }else{
           alert('文件格式不正确：缺少必要字段');
         }
@@ -993,15 +1044,30 @@ function importData(){
   input.click();
 }
 
+/* 完整备份：状态 + 图片原片（视频过大不打包，可从查看器"保存原片"单独存） */
 function exportData(){
-  var data=JSON.stringify(state,null,2);
-  var blob=new Blob([data],{type:'application/json'});
-  var url=URL.createObjectURL(blob);
-  var a=document.createElement('a');
-  a.href=url;
-  a.download='personal-growth-backup-'+new Date().toISOString().slice(0,10)+'.json';
-  a.click();
-  URL.revokeObjectURL(url);
+  toast('正在打包备份…');
+  var prep=(typeof EvidenceDB!=='undefined')
+    ?EvidenceDB.exportImages().catch(function(){ return []; })
+    :Promise.resolve([]);
+  prep.then(function(files){
+    var payload=JSON.parse(JSON.stringify(state));
+    payload.pgosFullBackup=true;
+    payload.exportedAt=new Date().toISOString();
+    payload.evidenceFiles=files;
+    var blob=new Blob([JSON.stringify(payload)],{type:'application/json'});
+    var url=URL.createObjectURL(blob);
+    var a=document.createElement('a');
+    a.href=url;
+    a.download='personal-growth-backup-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function(){ try{ URL.revokeObjectURL(url); }catch(e){} },3000);
+    toast(files.length
+      ?('备份完成：含 '+files.length+' 张图片原片（视频请在查看器里单独"保存原片"）')
+      :'备份完成（暂无图片原片）');
+  });
 }
 
 function resetData(){
@@ -1535,27 +1601,52 @@ function renderComponent(comp,stepIdx,compIdx){
     case 'evidence':
       var cpE=state.courseProgress[currentCourse];
       var sdE=cpE.stepData[stepIdx]||{};
+      var evList=state.evidence.filter(function(ev){ return ev.courseId===currentCourse&&ev.step===stepIdx; });
       html+='<div class="comp">';
       if(comp.label) html+='<div class="card-title" style="margin-bottom:8px">'+esc(comp.label)+'</div>';
       if(sdE.evidence){
-        var evMeta=findEvidenceMeta(currentCourse,stepIdx);
-        var evId=evRecordId(currentCourse,stepIdx);
-        html+='<div class="evidence-uploaded" data-action="view-evidence" data-id="'+esc(evId)+'">';
+        /* 链接型：单条展示 */
         if(sdE.linkValue){
+          html+='<div class="evidence-uploaded" data-action="view-evidence" data-id="'+esc(evRecordId(currentCourse,stepIdx))+'">';
           html+='<div class="evu-row">'+ic('link','icon-sm')+'<span class="evu-link">'+esc(sdE.linkValue)+'</span></div>';
-        }else if(evMeta&&evMeta.thumb){
-          html+='<img class="evu-thumb" src="'+evMeta.thumb+'" alt="成果预览">';
-        }else{
-          html+='<div class="evu-row">'+ic('check-circle','icon-sm')+' '+(evMeta&&evMeta.kind==='video'?'视频已上传':'成果已上传')+'</div>';
+          html+='<div class="evu-hint">点击查看 / 删除</div>';
+          html+='</div>';
         }
-        html+='<div class="evu-hint">点击查看 / 删除</div>';
-        html+='</div>';
+        /* 文件型：多缩略图网格 + 追加 */
+        if(evList.length){
+          html+='<div class="ev-thumbs">';
+          evList.forEach(function(ev){
+            var vid=ev.id||evRecordId(currentCourse,stepIdx);
+            html+='<div class="ev-th" data-action="view-evidence" data-id="'+esc(vid)+'">';
+            if(ev.thumb){
+              html+='<img src="'+ev.thumb+'" alt="'+esc(ev.title||'成果')+'">';
+            }else{
+              html+='<div class="ev-th-ph">'+ic(ev.kind==='video'?'video':'camera','icon-sm')+'</div>';
+            }
+            if(ev.kind==='video') html+='<div class="ev-th-play">'+ic('play','icon-xs')+'</div>';
+            html+='</div>';
+          });
+          if(evList.length<9){
+            html+='<div class="ev-th ev-th-add" data-action="upload-evidence" data-step="'+stepIdx+'">';
+            html+=ic('plus','icon-sm')+'<span>追加</span>';
+            html+='</div>';
+          }
+          html+='</div>';
+          html+='<div class="evu-hint">点击缩略图查看 / 删除 · 可追加多张</div>';
+        }
+        /* 异常兜底：标记已上传但记录丢失 → 给出重新上传入口 */
+        if(!sdE.linkValue&&!evList.length){
+          html+='<div class="evidence-area" data-action="upload-evidence" data-step="'+stepIdx+'">';
+          html+=ic('camera','icon-lg');
+          html+='<div>点击上传</div>';
+          html+='</div>';
+        }
       }else{
         var kinds=(comp.kinds||[]).join(' / ');
         var kindText=kinds||'文件';
         html+='<div class="evidence-area" data-action="upload-evidence" data-step="'+stepIdx+'">';
         html+=ic('camera','icon-lg');
-        html+='<div>点击上传（'+esc(kindText)+'）</div>';
+        html+='<div>点击上传（'+esc(kindText)+'）· 支持多选</div>';
         html+='<div style="font-size:12px">支持拍照或从相册选择 · 原图保存在本机</div>';
         html+='</div>';
       }
@@ -1721,11 +1812,6 @@ function toggleSelfcheck(stepIdx,itemIdx){
   renderCourseStep();
 }
 
-function simulateUpload(stepIdx){
-  // 真实上传入口：选择文件 → 压缩存储 → 更新状态
-  uploadEvidence(stepIdx);
-}
-
 /* 找到某步骤里的 evidence 组件定义 */
 function findEvidenceComp(course,stepIdx){
   var step=course.steps[stepIdx];
@@ -1737,6 +1823,14 @@ function findEvidenceComp(course,stepIdx){
 }
 
 function evRecordId(courseId,stepIdx){ return courseId+'_'+stepIdx; }
+
+/* 多文件：同一步骤第 N 个成果的 id（courseId_step_seq，课程 id 不含下划线） */
+function nextEvId(courseId,stepIdx){
+  var seq=0;
+  var prefix=courseId+'_'+stepIdx+'_';
+  while(state.evidence.some(function(ev){ return ev.id===prefix+seq; })) seq++;
+  return prefix+seq;
+}
 
 /* 从 state.evidence 找记录（兼容无 id 的旧数据） */
 function findEvidenceMeta(courseId,stepIdx){
@@ -1762,63 +1856,94 @@ function uploadEvidence(stepIdx){
     return;
   }
 
-  // 文件选择（图片/视频）
+  // 文件选择（图片/视频，支持多选，每步最多 9 个）
   var accept=[];
   if(kinds.indexOf('image')>=0) accept.push('image/*');
   if(kinds.indexOf('video')>=0) accept.push('video/*');
   var input=document.createElement('input');
   input.type='file';
+  input.multiple=true;
   input.accept=accept.join(',');
   input.onchange=function(){
-    if(!input.files||!input.files[0]) return;
-    var file=input.files[0];
-    var id=evRecordId(currentCourse,stepIdx);
-    var meta={
-      id:id,
-      courseId:currentCourse,
-      step:stepIdx,
-      module:course.module,
-      title:comp.label||course.evidenceLabel||course.outcome||course.title,
-      date:fmtDate(new Date())
-    };
-    // 处理中提示
+    var files=Array.prototype.slice.call(input.files||[]).slice(0,9);
+    if(!files.length) return;
     var area=document.querySelector('.evidence-area');
     if(area){ area.innerHTML='<div style="padding:18px;font-size:14px;color:var(--c-text-sub)">处理中，请稍候…</div>'; }
-    EvidenceDB.saveEvidence(file,meta).then(function(r){
-      completeUpload(course,stepIdx,{kind:(r.mime||'').indexOf('video')===0?'video':'image',thumb:r.thumb,size:r.size});
-    }).catch(function(err){
-      alert('上传失败：'+(err&&err.message?err.message:'未知错误'));
+    var done=0,fail=0;
+    var chain=Promise.resolve();
+    files.forEach(function(file){
+      chain=chain.then(function(){
+        var id=nextEvId(currentCourse,stepIdx);
+        var meta={
+          id:id,
+          courseId:currentCourse,
+          step:stepIdx,
+          module:course.module,
+          title:comp.label||course.evidenceLabel||course.outcome||course.title,
+          date:fmtDate(new Date())
+        };
+        return EvidenceDB.saveEvidence(file,meta).then(function(r){
+          completeUpload(course,stepIdx,{id:id,kind:(r.mime||'').indexOf('video')===0?'video':'image',thumb:r.thumb,size:r.size});
+          done++;
+        }).catch(function(err){
+          fail++;
+          if(files.length===1) alert('上传失败：'+(err&&err.message?err.message:'未知错误'));
+        });
+      });
+    });
+    chain.then(function(){
+      if(files.length>1) toast('已上传 '+done+' 个文件'+(fail?('，'+fail+' 个失败'):''));
       renderCourseStep();
     });
   };
   input.click();
 }
 
-/* 上传完成后的状态更新（图片/视频/链接共用） */
+/* 上传完成后的状态更新：文件类追加新记录（多文件），链接类单条更新 */
 function completeUpload(course,stepIdx,info){
   var cp=state.courseProgress[currentCourse];
+  if(!cp.stepData[stepIdx]) cp.stepData[stepIdx]={};
   cp.stepData[stepIdx].evidence=true;
 
-  var id=evRecordId(currentCourse,stepIdx);
-  var exists=state.evidence.find(function(ev){ return ev.id===id||(ev.courseId===currentCourse&&ev.step===stepIdx); });
-  if(!exists){
-    state.evidence.push({
-      id:id,
-      courseId:currentCourse,
-      step:stepIdx,
-      module:course.module,
-      title:course.evidenceLabel||course.outcome||course.title,
-      date:fmtDate(new Date()),
-      kind:info.kind||'image',
-      thumb:info.thumb||null,
-      size:info.size||0,
-      link:info.link||null
+  if(info.kind==='link'){
+    /* 链接型：同一步骤只保留一条 */
+    var exists=state.evidence.find(function(ev){
+      return ev.courseId===currentCourse&&ev.step===stepIdx&&ev.kind==='link';
     });
-  }else{
-    exists.thumb=info.thumb||exists.thumb||null;
-    exists.kind=info.kind||exists.kind;
-    exists.size=info.size||exists.size||0;
-    exists.link=info.link||exists.link||null;
+    if(!exists){
+      state.evidence.push({
+        id:evRecordId(currentCourse,stepIdx),
+        courseId:currentCourse,
+        step:stepIdx,
+        module:course.module,
+        title:course.evidenceLabel||course.outcome||course.title,
+        date:fmtDate(new Date()),
+        kind:'link',
+        thumb:null,
+        size:0,
+        link:info.link||null
+      });
+    }else{
+      exists.link=info.link||exists.link||null;
+      exists.date=fmtDate(new Date());
+    }
+  }else if(info.id){
+    /* 文件类：追加（同 id 幂等） */
+    var dup=state.evidence.find(function(ev){ return ev.id===info.id; });
+    if(!dup){
+      state.evidence.push({
+        id:info.id,
+        courseId:currentCourse,
+        step:stepIdx,
+        module:course.module,
+        title:course.evidenceLabel||course.outcome||course.title,
+        date:fmtDate(new Date()),
+        kind:info.kind||'image',
+        thumb:info.thumb||null,
+        size:info.size||0,
+        link:null
+      });
+    }
   }
 
   // 若课程已完成且此前成果待补 → 补交后任务完成
@@ -1838,22 +1963,27 @@ function completeUpload(course,stepIdx,info){
   renderCourseStep();
 }
 
-/* 删除成果（查看器回调）：清 IndexedDB + state，课程步骤回到待上传 */
+/* 删除成果（查看器回调）：清 IndexedDB + state；该步骤记录清空后才回到待上传 */
 window.onEvidenceDeleted=function(id,meta){
   var m=meta||{};
   var courseId=m.courseId,step=m.step;
-  // 旧数据兼容：从 id 解析
+  // 旧数据兼容：从 id 解析（courseId 不含下划线，p[0]=课程，p[1]=步骤）
   if(courseId===undefined&&typeof id==='string'){
-    var p=id.lastIndexOf('_');
-    if(p>0){ courseId=id.slice(0,p); step=parseInt(id.slice(p+1),10); }
+    var p=id.split('_');
+    if(p.length>=2){ courseId=p[0]; step=parseInt(p[1],10); }
   }
-  var idx=state.evidence.findIndex(function(ev){ return ev.id===id||(ev.courseId===courseId&&ev.step===step); });
+  var idx=state.evidence.findIndex(function(ev){
+    if(ev.id&&ev.id===id) return true;
+    if(!ev.id&&courseId!==undefined&&ev.courseId===courseId&&ev.step===step) return true;
+    return false;
+  });
   if(idx>=0) state.evidence.splice(idx,1);
 
   if(courseId&&COURSES[courseId]){
     var cp=state.courseProgress[courseId];
     var course=COURSES[courseId];
-    if(cp&&cp.stepData&&cp.stepData[step]){
+    var remain=state.evidence.filter(function(ev){ return ev.courseId===courseId&&ev.step===step; });
+    if(cp&&cp.stepData&&cp.stepData[step]&&remain.length===0){
       delete cp.stepData[step].evidence;
       delete cp.stepData[step].linkValue;
     }
@@ -2239,7 +2369,7 @@ document.addEventListener('click',function(e){
       toggleSelfcheck(parseInt(el.dataset.step,10),parseInt(el.dataset.item,10));
       break;
     case 'upload-evidence':
-      simulateUpload(parseInt(el.dataset.step,10));
+      uploadEvidence(parseInt(el.dataset.step,10));
       break;
     case 'view-evidence':{
       var vId=el.dataset.id;
@@ -2248,9 +2378,9 @@ document.addEventListener('click',function(e){
       var vIdx=state.evidence.findIndex(function(ev){ return (ev.id||evRecordId(ev.courseId,ev.step))===vId; });
       if(vIdx>=0) vMeta=state.evidence[vIdx];
       else{
-        var vp=vId.lastIndexOf('_');
-        if(vp>0){
-          var vC=vId.slice(0,vp),vS=parseInt(vId.slice(vp+1),10);
+        var vp=vId.split('_');
+        if(vp.length>=2){
+          var vC=vp[0],vS=parseInt(vp[1],10);
           vMeta=state.evidence.find(function(ev){ return ev.courseId===vC&&ev.step===vS; })||null;
         }
       }

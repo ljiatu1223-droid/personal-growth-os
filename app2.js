@@ -1,7 +1,11 @@
-/* app2.js — v1.3 覆盖补丁（P0/P1 修复 + 每周备份提醒）
+/* app2.js — v1.4 覆盖补丁（P0/P1 修复 + 每周备份提醒 + 计划锚点日）
  * 在 app.js 之后加载：重定义本轮修复涉及的函数 + 捕获阶段接管事件分发
  * v1.2 部分与本地 v1.2 源码对应函数逐字节一致（由构建脚本抽取）
  * v1.3 新增：BackupReminder 每周备份提醒（数据安全功能，默认开启不可关）
+ * v1.4 新增：计划锚点日 planStart——Week 1 不再隐式锚定自然周，
+ *           可显式设定开始日期（默认迁移到 2026-08-24 下周一）
+ *           迁移经由覆盖后的 loadState 在 DOMContentLoaded 内执行，
+ *           避免在脚本求值期跑在空 state 上覆盖用户数据
  */
 try{ ICONS.plus='<line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>'; }catch(e){}
 
@@ -144,6 +148,314 @@ function backupStatusHtml(){
   }catch(e){ return ''; }
 }
 
+/* ===== v1.4 计划锚点日 =====
+ * 原来 getTodayDayNum() 直接返回"今天是一周的第几天"，计划隐式锚定自然日历周，
+ * 用户周中才开始使用时本周只剩零头。v1.4 引入 state.planStart（Day 1 的日期），
+ * 计划整周（Day 1-7）从锚点日起依次排开。
+ */
+
+/* 覆盖：loadState —— v1.4 修正版，修掉三个问题：
+ * 1) 老版只认 schemaVersion===1，v2 状态会被整包丢弃重置 → 现在接受 v1 与 v2；
+ * 2) 迁移原来用 IIFE 在脚本求值期执行，而 loadState 要等 DOMContentLoaded，
+ *    真实浏览器里迁移会跑在空 state 上，把用户存的数据覆盖成残缺包
+ *    → 现在迁移放在 loadState 内部、完整 state 就绪之后执行；
+ * 3) 兼容残缺包（有锚点无 tasks）：保留锚点与时间线，其余从默认值补齐。 */
+function loadState(){
+  var fromSaved=false;
+  try{
+    var saved=localStorage.getItem('pgos_state');
+    if(saved){
+      var parsed=JSON.parse(saved);
+      if(parsed&&parsed.tasks&&(parsed.schemaVersion===1||parsed.schemaVersion===2)){
+        state=parsed;                       /* 完整状态：v1 / v2 均接受 */
+        fromSaved=true;
+      }else if(parsed&&parsed.schemaVersion===2){
+        state=parsed;                       /* 残缺包：有锚点无 tasks */
+        state.tasks=getDefaults().tasks;
+        fromSaved=true;
+      }else{
+        state=getDefaults();
+      }
+      if(fromSaved){
+        var defaults=getDefaults();
+        if(!state.profile) state.profile=defaults.profile;
+        if(!state.growth) state.growth=defaults.growth;
+        if(!state.skills) state.skills=defaults.skills;
+        if(!state.settings) state.settings=defaults.settings;
+        // v1.1 迁移：提醒设置整体 + 提醒时间默认值
+        if(state.settings&&!state.settings.reminders) state.settings.reminders=defaults.settings.reminders;
+        if(state.settings&&state.settings.reminders){
+          var rd=state.settings.reminders;
+          var rdDef=defaults.settings.reminders;
+          ['daily','taskStart','weeklyReview','sleep'].forEach(function(k){
+            if(rd[k]===undefined) rd[k]=rdDef[k];
+          });
+          if(rd.dailyTime===undefined) rd.dailyTime=rdDef.dailyTime;
+          if(rd.weeklyTime===undefined) rd.weeklyTime=rdDef.weeklyTime;
+          if(rd.sleepTime===undefined) rd.sleepTime=rdDef.sleepTime;
+        }
+        if(!state.courseProgress) state.courseProgress={};
+        if(!state.evidence) state.evidence=[];
+        if(!state.timeline) state.timeline=[];
+        if(!state.weeklyReports) state.weeklyReports=[];
+        if(!state.rescheduleEvents) state.rescheduleEvents=[];
+        if(!state.lastValues) state.lastValues={};
+        if(!state.version) state.version=defaults.version;
+      }
+    }else{
+      state=getDefaults();
+    }
+  }catch(e){
+    state=getDefaults();
+  }
+  migratePlanStart(fromSaved);
+  recoverOrphanEvidence();
+}
+
+/* 一次性迁移：老数据（v1.3 及以前）应用户要求，Week 1 整周挪到下周一（2026-08-24）开始。
+ * 重置 Week 1 程序状态（任务/课程进度/技能/调整记录），
+ * 成长档案（成果照片、健身/烹饪等记录、时间线）全部保留。
+ * 全新安装不写死 8/24，从最近的周一开始。仅在 loadState 内调用（此时 state 必已就绪）。 */
+function migratePlanStart(fromSaved){
+  'use strict';
+  try{
+    if(typeof state==='undefined'||!state) return;
+    if(state.planStart) return;            /* 幂等：已有锚点不再迁移 */
+    if(fromSaved){
+      state.planStart='2026-08-24';
+      (state.tasks||[]).forEach(function(t){
+        t.status='pending';
+        delete t.newDay;
+        delete t.newTime;
+      });
+      state.courseProgress={};
+      if(typeof getDefaults==='function'){
+        state.skills=JSON.parse(JSON.stringify(getDefaults().skills));
+      }
+      state.rescheduleEvents=[];
+      if(!state.timeline) state.timeline=[];
+      state.timeline.push({date:fmtDate(new Date()),text:'计划调整为 8月24日（周一）开始，Week 1 重新起跑'});
+    }else{
+      state.planStart=_nextPlanStartForReset();
+      if(!state.timeline) state.timeline=[];
+    }
+    state.schemaVersion=2;
+    if(typeof saveState==='function') saveState();
+  }catch(e){ /* 迁移失败不影响使用，沿用旧逻辑 */ }
+}
+
+/* 成果孤儿恢复：状态里成果列表为空、但本机 IndexedDB 还存着原片时，重建成果记录。
+ * （防御状态被误清的情况；正常删除会同时清 IndexedDB，不会误恢复。原片元数据齐全，可完整重建）
+ * 幂等：list() 是异步的，若 loadState 被再次调用（如多重 DOMContentLoaded），
+ * 入口检查会双双通过 → 在回调里复查一次，先完成的一方生效，后到的直接退出 */
+function recoverOrphanEvidence(){
+  try{
+    if(typeof EvidenceDB==='undefined'||!EvidenceDB||typeof EvidenceDB.list!=='function') return;
+    if(state.evidence&&state.evidence.length) return;
+    EvidenceDB.list().then(function(recs){
+      try{
+        if(state.evidence&&state.evidence.length) return;   /* 复查：并发恢复已生效则退出 */
+        var files=(recs||[]).filter(function(r){ return r&&r.id&&r.blob; });
+        if(!files.length) return;
+        files.sort(function(a,b){ return (a.ts||0)-(b.ts||0); });
+        files.forEach(function(r){
+          state.evidence.push({
+            id:r.id,courseId:r.courseId,step:r.step,module:r.module,
+            title:r.title,date:r.date,kind:r.kind||'image',
+            thumb:r.thumb||null,size:r.size||0,link:null
+          });
+        });
+        state.timeline=state.timeline||[];
+        state.timeline.push({date:fmtDate(new Date()),text:'已从本机存储恢复 '+files.length+' 条成果记录'});
+        if(typeof saveState==='function') saveState();
+        if(typeof navigate==='function'&&typeof currentPage!=='undefined') navigate(currentPage);
+      }catch(e){}
+    }).catch(function(){});
+  }catch(e){}
+}
+
+/* 锚点日期工具 */
+function planStartDate(){
+  try{
+    var s=state&&state.planStart;
+    if(!s) return null;
+    var p=String(s).split('-');
+    var d=new Date(parseInt(p[0],10),parseInt(p[1],10)-1,parseInt(p[2],10));
+    return isNaN(d.getTime())?null:d;
+  }catch(e){ return null; }
+}
+
+function planDayDate(n){                    /* Day n 对应的日期 */
+  var s=planStartDate();
+  return s?new Date(s.getFullYear(),s.getMonth(),s.getDate()+(n-1)):null;
+}
+
+function planDayLabel(n){                   /* "8月24日 · 周一" */
+  var d=planDayDate(n);
+  if(!d) return '';
+  var dow=d.getDay()===0?7:d.getDay();
+  return (d.getMonth()+1)+'月'+d.getDate()+'日 · '+DAY_NAMES[dow];
+}
+
+/* 计划状态：<1 未开始（负数=更早），1-7 进行中，>7 已结束 */
+function planDayNum(){
+  var start=planStartDate();
+  if(!start) return null;
+  var now=new Date();
+  var today=new Date(now.getFullYear(),now.getMonth(),now.getDate());
+  return Math.round((today-start)/86400000)+1;
+}
+
+/* 覆盖：今天是计划第几天（无锚点时沿用旧的自然周逻辑兜底） */
+function getTodayDayNum(){
+  var n=planDayNum();
+  if(n===null){
+    var d=new Date().getDay();
+    return d===0?7:d;
+  }
+  return n;
+}
+
+/* 覆盖：月视图的计划周一起点（原函数取自然周周一） */
+function mondayOfCurrentWeek(){
+  return planStartDate()||(function(){
+    var now=new Date();
+    var day=now.getDay()===0?7:now.getDay();
+    return new Date(now.getFullYear(),now.getMonth(),now.getDate()-(day-1));
+  })();
+}
+
+/* 覆盖：倒计时文案——计划未开始时不说"明天"（Day 1 可能是 3 天后），直接说周几 */
+var _countdownTextBase=countdownText;
+countdownText=function(t){
+  var today=getTodayDayNum();
+  if(today<1){
+    if(t.status!=='pending') return '';
+    var d=effDay(t);
+    if(d>=1&&d<=7) return DAY_NAMES[d]+' '+(t.segments?t.segments[0].time:effTime(t))+' 开始';
+    return '';
+  }
+  return _countdownTextBase(t);
+};
+
+/* 包装：今日页——计划未开始/已结束时在顶部加状态卡 */
+var _renderTodayBase=renderToday;
+renderToday=function(){
+  _renderTodayBase();
+  try{
+    var n=getTodayDayNum();
+    var page=document.getElementById('page-today');
+    if(!page||(n>=1&&n<=7)) return;
+    var start=planStartDate();
+    var card=document.createElement('div');
+    card.className='card';
+    card.style.textAlign='center';
+    card.style.padding='22px 16px';
+    if(n<1&&start){
+      var remain=1-n;
+      var first=(state.tasks||[]).filter(function(t){return effDay(t)===1;})
+        .sort(function(a,b){return toMin(effTime(a))-toMin(effTime(b));})[0];
+      card.innerHTML=ic('calendar','icon-xl')
+        +'<div style="font-size:17px;font-weight:600;margin-top:8px">计划还有 '+remain+' 天开始</div>'
+        +'<div style="font-size:14px;color:var(--c-text-sub);margin-top:4px">'
+        +esc(planDayLabel(1))+' 启动 · Day 1「'+esc(first?first.title:'')+'」</div>';
+    }else{
+      card.innerHTML=ic('check-circle','icon-xl')
+        +'<div style="font-size:17px;font-weight:600;margin-top:8px">Week 1 已完成</div>'
+        +'<div style="font-size:14px;color:var(--c-text-sub);margin-top:4px">'
+        +esc(planDayLabel(1))+' - '+esc(planDayLabel(7))+' · 去计划页看看周报与后续安排</div>';
+    }
+    page.insertBefore(card,page.firstChild);
+  }catch(e){}
+};
+
+/* 包装：计划页——副标题按锚点显示日期范围与状态 */
+var _renderPlanBase=renderPlan;
+renderPlan=function(){
+  _renderPlanBase();
+  try{
+    if(!planStartDate()) return;
+    var sub=document.querySelector('#page-plan .plan-week-header div[style*="font-size:14px"]');
+    if(!sub) return;
+    var n=getTodayDayNum();
+    var range=planDayLabel(1)+' - '+planDayLabel(7);
+    if(n<1){
+      sub.textContent='计划 '+range+' 开始 · 还有 '+(1-n)+' 天';
+    }else if(n>7){
+      sub.textContent=range+' · Week 1 已结束';
+    }else{
+      sub.textContent=range+' · 今天是第 '+n+' 天 / 7 天';
+    }
+  }catch(e){}
+};
+
+/* 包装：周视图——每天标题后加具体日期（"周一 · 8/24"） */
+var _renderPlanWeekBase=renderPlanWeek;
+renderPlanWeek=function(todayNum){
+  var html=_renderPlanWeekBase(todayNum);
+  try{
+    html=html.replace(/(<div class="day-header">)([^<]+)/g,function(m,open,txt){
+      var d=DAY_NAMES.indexOf(txt.trim());
+      var dd=d>0?planDayDate(d):null;
+      var tail=/\s+$/.test(txt)?' ':'';
+      return open+txt.replace(/\s+$/,'')+(dd?(' · '+(dd.getMonth()+1)+'/'+dd.getDate()):'')+tail;
+    });
+  }catch(e){}
+  return html;
+};
+
+/* 计划开始日选择（复用输入弹窗容器，date 原生滚轮） */
+function showDateModal(title,label,defVal,callback){
+  var modal=document.getElementById('input-modal');
+  var content=document.getElementById('input-modal-content');
+  var html='';
+  html+='<div class="input-modal-title">'+esc(title)+'</div>';
+  html+='<label>'+esc(label)+'</label>';
+  html+='<input type="date" id="modal-input" value="'+esc(defVal||'')+'">';
+  html+='<div style="font-size:12px;color:var(--c-text-tert);margin-top:6px">建议选周一，Day 1-7 会依次排开</div>';
+  html+='<div class="input-modal-btns">';
+  html+='<button class="btn btn-secondary" style="flex:1" data-action="close-input-modal">取消</button>';
+  html+='<button class="btn btn-primary" style="flex:1" data-action="submit-input-modal">确定</button>';
+  html+='</div>';
+  content.innerHTML=html;
+  modal.classList.add('active');
+  modal._callback=callback;
+}
+
+function openPlanStartPicker(){
+  showDateModal('计划开始日','第一天（Day 1）的日期',state.planStart||'',function(v){
+    state.planStart=v;
+    state.schemaVersion=Math.max(state.schemaVersion||1,2);
+    saveState();
+    toast('计划开始日已调整为 '+planDayLabel(1));
+    navigate('profile');
+  });
+}
+
+/* 覆盖：重置数据后，新计划从最近的周一开始（周一~周五取本周一，周六日取下周一） */
+var _nextPlanStartForReset=function(){
+  function pad2(n){ return (n<10?'0':'')+n; }
+  var now=new Date();
+  var dow=now.getDay()===0?7:now.getDay();
+  var d=new Date(now.getFullYear(),now.getMonth(),now.getDate()-(dow-1));
+  if(dow>=6) d=new Date(d.getFullYear(),d.getMonth(),d.getDate()+7);
+  return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate());
+};
+function resetData(){
+  if(confirm('确定重置所有数据？此操作不可恢复。\n\n（包括任务进度与已上传的成果照片/视频）')){
+    localStorage.removeItem('pgos_state');
+    state=getDefaults();
+    state.planStart=_nextPlanStartForReset();
+    state.schemaVersion=2;
+    saveState();
+    applyTheme();
+    if(typeof EvidenceDB!=='undefined'){
+      EvidenceDB.clearAll().catch(function(){});
+    }
+    navigate('today');
+  }
+}
+
 /* P0-2 完整备份（含图片原片）与导入回填 */
 function renderProfile(){
   var html='';
@@ -179,6 +491,16 @@ function renderProfile(){
   html+='<div class="settings-item"><div class="si-icon">'+ic('sun')+'</div><div class="si-label">工作日</div><div class="si-value">07:30 起床 · 08:30-18:00 工作</div></div>';
   html+='<div class="settings-item"><div class="si-icon">'+ic('moon')+'</div><div class="si-label">入睡</div><div class="si-value">00:00</div></div>';
   html+='<div class="settings-item"><div class="si-icon">'+ic('clock')+'</div><div class="si-label">周末</div><div class="si-value">08:30 起床 · 无固定工作</div></div>';
+  html+='</div>';
+
+  // 计划（v1.4：锚点日开始日，点击可改）
+  html+='<div class="section-title">计划</div>';
+  html+='<div class="settings-group">';
+  html+='<div class="settings-item" data-action="edit-plan-start">';
+  html+='<div class="si-icon">'+ic('calendar')+'</div>';
+  html+='<div class="si-label">开始日期（Day 1）</div>';
+  html+='<div class="si-value">'+esc(planDayLabel(1)||'未设置')+'</div>';
+  html+='<div class="si-arrow">'+ic('chevron-right','icon-sm')+'</div></div>';
   html+='</div>';
 
   // 成长模块
@@ -827,6 +1149,9 @@ document.addEventListener('click',function(e){
       break;
     case 'edit-profile':
       editProfileField(el.dataset.field);
+      break;
+    case 'edit-plan-start':
+      openPlanStartPicker();
       break;
     case 'export-data':
       exportData();
